@@ -1,0 +1,44 @@
+{
+  "name": "studybuddy",
+  "version": "1.0.0",
+  "description": "AI-powered learning feedback system with real-time emotion detection",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && python -m venv venv && venv\\Scripts\\activate && pip install -r requirements.txt && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:frontend": "cd frontend && npm install && npm run dev",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm run start",
+    "lint": "cd frontend && npm run lint",
+    "test": "cd frontend && npm run test",
+    "clean": "rimraf node_modules frontend/node_modules frontend/.next backend/venv backend/__pycache__ backend/app/__pycache__"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "rimraf": "^5.0.5"
+  },
+  "keywords": [
+    "ai",
+    "education",
+    "emotion-detection",
+    "learning",
+    "feedback",
+    "fastapi",
+    "nextjs",
+    "typescript"
+  ],
+  "author": "StudyBuddy Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/studybuddy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/studybuddy/issues"
+  },
+  "homepage": "https://github.com/your-username/studybuddy#readme"
+} 
