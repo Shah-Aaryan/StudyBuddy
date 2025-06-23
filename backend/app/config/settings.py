@@ -5,6 +5,7 @@ import os
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://postgres:UfPn4h9qbooZnrU2@db.eliytysopayqrnfgadpi.supabase.co:5432/postgres"
+
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
@@ -30,6 +31,9 @@ class Settings(BaseSettings):
     CONFUSION_THRESHOLD: float = 0.7
     FRUSTRATION_THRESHOLD: float = 0.6
     BOREDOM_THRESHOLD: float = 0.65
+
+    #gemini
+    gemini_api_key: str
     
     class Config:
         env_file = ".env"

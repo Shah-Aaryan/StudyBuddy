@@ -100,3 +100,25 @@ class AnalyticsResponse(BaseModel):
     emotion_distribution: Dict[str, float]
     intervention_effectiveness: Dict[str, float]
     learning_patterns: Dict
+
+class ChatMessage(BaseModel):
+    user_id: str
+    message: str
+    context: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    user_id: str
+    response: str
+    status: str
+
+class ChatHistoryResponse(BaseModel):
+    user_id: str
+    history: List[Dict]
+    status: str
+
+class GeneralChatRequest(BaseModel):
+    message: str
+
+class GeneralChatResponse(BaseModel):
+    response: str
+    status: str
