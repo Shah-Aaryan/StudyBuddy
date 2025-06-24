@@ -34,6 +34,12 @@ export default function DashboardPage() {
   const [currentIntervention, setCurrentIntervention] = useState<InterventionResponse | null>(null);
   const [showIntervention, setShowIntervention] = useState(false);
   const [sessionId] = useState(`session_${Date.now()}`);
+  const [suggestedVideos, setSuggestedVideos] = useState<string[]>([]);
+  const [suggestedGames, setSuggestedGames] = useState<string[]>([]);
+  const [isWaitingForUrl, setIsWaitingForUrl] = useState(false);
+  const [countdown, setCountdown] = useState(5);
+  const [currentEmotionState, setCurrentEmotionState] = useState<string>('');
+  const [countdownAction, setCountdownAction] = useState<'session' | 'confused' | null>(null);
 
   const {
     webcamRef,
@@ -49,6 +55,13 @@ export default function DashboardPage() {
     sessionId,
     onEmotionChange: (emotion: EmotionResponse) => {
       console.log('Emotion detected:', emotion);
+      setCurrentEmotionState(emotion.primary_emotion);
+      // Check if user needs content suggestions based on emotion
+      if (emotion.primary_emotion === 'confused' && emotion.confidence > 0.7) {
+        handleConfusedEmotion();
+      } else if (emotion.primary_emotion === 'bored' && emotion.confidence > 0.6) {
+        handleBoredEmotion();
+      }
     },
     onIntervention: (intervention: InterventionResponse) => {
       setCurrentIntervention(intervention);
@@ -74,14 +87,91 @@ export default function DashboardPage() {
     }
   }, [user?.id, connectWebSocket]);
 
-  const handleStartSession = async () => {
+  // Test backend connectivity
+  const testBackendConnection = async () => {
     try {
-      await startDetection();
-      toast.success('Emotion detection started!');
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${baseUrl}/api/v1/chat/health`);
+      if (res.ok) {
+        console.log('Backend is accessible');
+      } else {
+        console.error('Backend health check failed:', res.status);
+      }
     } catch (error) {
-      toast.error('Failed to start emotion detection');
+      console.error('Backend connection test failed:', error);
     }
   };
+
+  // Test backend on mount
+  useEffect(() => {
+    testBackendConnection();
+  }, []);
+
+  const handleStartSession = async () => {
+    setIsWaitingForUrl(true);
+    setCountdown(5);
+    setCountdownAction('session');
+    toast("Switch to your tutorial tab now! We'll capture the URL in 5 seconds…");
+  };
+
+  // Countdown effect
+  useEffect(() => {
+    if (isWaitingForUrl && countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+    if (isWaitingForUrl && countdown === 0) {
+      // Now capture the URL and send to backend
+      const captureAndSend = async () => {
+        try {
+          if (countdownAction === 'session') {
+            await startDetection();
+            toast.success('Emotion detection started!');
+          }
+          
+          const videoUrl = window.location.href;
+          const message = `I am currently watching a tutorial on ${videoUrl} and finding it difficult to understand. Suggest me 2-3 simpler video tutorials with their full URLs. Format your response to include the URLs clearly so they can be extracted.`;
+          
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const apiUrl = `${baseUrl}/api/v1/chat/ask`;
+          
+          const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message }),
+          });
+          
+          if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`HTTP error! status: ${res.status}, body: ${errorText}`);
+          }
+          
+          const data = await res.json();
+          if (data.urls && Array.isArray(data.urls)) {
+            setSuggestedVideos(data.urls);
+            if (countdownAction === 'session') {
+              toast.success(`Found ${data.urls.length} suggested videos!`);
+            } else {
+              toast.success('Found simpler videos for you!');
+            }
+          } else {
+            setSuggestedVideos([]);
+          }
+        } catch (error) {
+          if (countdownAction === 'session') {
+            toast.error('Failed to start emotion detection or fetch suggestions');
+          } else {
+            toast.error('Failed to fetch simpler videos');
+          }
+          setSuggestedVideos([]);
+        } finally {
+          setIsWaitingForUrl(false);
+          setCountdownAction(null);
+        }
+      };
+      captureAndSend();
+    }
+  }, [isWaitingForUrl, countdown, countdownAction, startDetection]);
 
   const handleStopSession = () => {
     stopDetection();
@@ -101,6 +191,42 @@ export default function DashboardPage() {
     }
     setShowIntervention(false);
     setCurrentIntervention(null);
+  };
+
+  // Function to handle confused emotion - get simpler videos
+  const handleConfusedEmotion = async () => {
+    setIsWaitingForUrl(true);
+    setCountdown(5);
+    setCountdownAction('confused');
+    toast("Switch to your tutorial tab now! We'll capture the URL in 5 seconds…");
+  };
+
+  // Function to handle bored emotion - get games
+  const handleBoredEmotion = async () => {
+    try {
+      const message = "I am bored suggest me some fun playable web games that I can play directly in my browser. Please suggest 2-3 free online games with their full URLs. Format your response to include the URLs clearly so they can be extracted.";
+      
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = `${baseUrl}/api/v1/chat/ask`;
+      
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      if (data.urls && Array.isArray(data.urls)) {
+        setSuggestedGames(data.urls);
+        toast.success('Found some fun games for you!');
+      }
+    } catch (error) {
+      console.error('Failed to fetch games:', error);
+    }
   };
 
   if (!user) {
@@ -192,11 +318,11 @@ export default function DashboardPage() {
                 <div className="flex space-x-4">
                   <Button
                     onClick={handleStartSession}
-                    disabled={isRecording}
+                    disabled={isRecording || isWaitingForUrl}
                     className="flex items-center"
                   >
                     <Play className="h-4 w-4 mr-2" />
-                    Start Session
+                    {isWaitingForUrl ? `Capturing in ${countdown}s...` : 'Start Session'}
                   </Button>
                   
                   <Button
@@ -209,7 +335,76 @@ export default function DashboardPage() {
                     End Session
                   </Button>
                 </div>
+
+                {/* Manual Test Buttons */}
+                <div className="mt-4 flex space-x-4">
+                  <Button
+                    variant="outline"
+                    onClick={handleConfusedEmotion}
+                    disabled={isWaitingForUrl}
+                    className="flex items-center text-orange-600 border-orange-200 hover:bg-orange-50"
+                  >
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    Test Confused (Switch to Tutorial Tab)
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    onClick={handleBoredEmotion}
+                    className="flex items-center text-purple-600 border-purple-200 hover:bg-purple-50"
+                  >
+                    <Play className="h-4 w-4 mr-2" />
+                    Test Bored (Get Web Games)
+                  </Button>
+                </div>
               </div>
+              {isWaitingForUrl && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md text-blue-700">
+                  Switch to your tutorial tab now! We'll capture the URL in {countdown} second{countdown !== 1 ? 's' : ''}…
+                </div>
+              )}
+              {/* Suggested Videos Section */}
+              {suggestedVideos.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-lg font-semibold text-gray-900 mb-2">You seem confused! Here are some simpler videos:</h4>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {suggestedVideos.map((url, idx) => (
+                      <li key={idx}>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{url}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Suggested Games Section */}
+              {suggestedGames.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-lg font-semibold text-gray-900 mb-2">Here are some games if you are bored:</h4>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {suggestedGames.map((url, idx) => (
+                      <li key={idx}>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-green-600 underline">{url}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Emotion-based Content Trigger */}
+              {currentEmotionState && (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                  <p className="text-yellow-800 text-sm">
+                    <strong>Current emotion detected:</strong> {currentEmotionState}
+                    {currentEmotionState === 'confused' && (
+                      <span className="block mt-1">We'll suggest simpler videos when you seem confused.</span>
+                    )}
+                    {currentEmotionState === 'bored' && (
+                      <span className="block mt-1">We'll suggest games when you seem bored.</span>
+                    )}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Emotion Detection Status */}

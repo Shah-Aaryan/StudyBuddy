@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.services.gemini_service import GeminiChatbot
 from app.models.schemas import ChatMessage, ChatResponse, ChatHistoryResponse,GeneralChatRequest,GeneralChatResponse
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +19,22 @@ async def general_chat_response(payload: GeneralChatRequest):
         # Create a temp chat session
         temp_session = chatbot.model.start_chat(history=[])
 
+        # Enhance the message to be more specific about video suggestions
+        enhanced_message = f"{payload.message}\n\nPlease suggest 2-3 simpler video tutorials with their full URLs. Format your response to include the URLs clearly so they can be extracted."
+        
         # Send message
-        result = temp_session.send_message(payload.message)
+        result = temp_session.send_message(enhanced_message)
+
+        # Extract URLs from the response
+        def extract_urls(text):
+            url_pattern = r'(https?://[^\s]+)'
+            return re.findall(url_pattern, text)
+        urls = extract_urls(result.text)
 
         return GeneralChatResponse(
             response=result.text,
-            status="success"
+            status="success",
+            urls=urls
         )
     except Exception as e:
         logger.error(f"Error in general chat: {str(e)}")

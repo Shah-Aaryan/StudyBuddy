@@ -46,54 +46,60 @@ class EmotionModelManager:
         return normalized.reshape(1, -1)
     
     def preprocess_audio_data(self, audio_data: np.ndarray, sr: int = 22050) -> np.ndarray:
-        """Extract audio features for emotion detection"""
-        # Extract MFCC features
-        mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
-        mfccs_mean = np.mean(mfccs, axis=1)
-        
-        # Extract spectral features
-        spectral_centroids = librosa.feature.spectral_centroid(y=audio_data, sr=sr)
-        spectral_centroids_mean = np.mean(spectral_centroids)
-        
-        # Extract zero crossing rate
-        zcr = librosa.feature.zero_crossing_rate(audio_data)
-        zcr_mean = np.mean(zcr)
-        
-        # Combine features
-        features = np.concatenate([mfccs_mean, [spectral_centroids_mean, zcr_mean]])
+        """Extract audio features for emotion detection (match training script)"""
+        import librosa
+        import numpy as np
+        # MFCC
+        mfccs = np.mean(librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=40), axis=1)
+        # Chroma
+        chroma = np.mean(librosa.feature.chroma_stft(y=audio_data, sr=sr), axis=1)
+        # Mel Spectrogram
+        mel = np.mean(librosa.feature.melspectrogram(y=audio_data, sr=sr), axis=1)
+        # Spectral Contrast
+        contrast = np.mean(librosa.feature.spectral_contrast(y=audio_data, sr=sr), axis=1)
+        # Tonnetz
+        tonnetz = np.mean(librosa.feature.tonnetz(y=librosa.effects.harmonic(audio_data), sr=sr), axis=1)
+        # Zero Crossing Rate
+        zcr = [np.mean(librosa.feature.zero_crossing_rate(y=audio_data))]
+        # RMS
+        rms = [np.mean(librosa.feature.rms(y=audio_data))]
+        # Tempo
+        tempo = [librosa.beat.tempo(y=audio_data, sr=sr)[0]]
+        # YIN (fundamental frequency)
+        try:
+            yin = [np.mean(librosa.yin(audio_data, fmin=50, fmax=300, sr=sr))]
+        except Exception:
+            yin = [0.0]
+        features = np.hstack([
+            mfccs, chroma, mel, contrast, tonnetz, zcr, rms, tempo, yin
+        ])
         return features.reshape(1, -1)
     
     def preprocess_interaction_data(self, interaction_data: Dict) -> np.ndarray:
-        """Preprocess interaction data for model input"""
-        features = []
-        
-        # Mouse movement features
-        mouse_movements = interaction_data.get('mouse_movements', [])
-        if mouse_movements:
-            speeds = [m.get('speed', 0) for m in mouse_movements]
-            features.extend([
-                np.mean(speeds),
-                np.std(speeds),
-                len(mouse_movements)
-            ])
-        else:
-            features.extend([0, 0, 0])
-        
-        # Click patterns
-        clicks = interaction_data.get('clicks', [])
-        features.append(len(clicks))
-        
-        # Scroll behavior
-        scrolls = interaction_data.get('scrolls', [])
-        features.append(len(scrolls))
-        
-        # Time-based features
-        features.extend([
-            interaction_data.get('idle_time', 0),
-            interaction_data.get('active_time', 0),
-            interaction_data.get('tab_switches', 0)
-        ])
-        
+        """Preprocess interaction data to match training script features"""
+        # Extract features as per training script
+        idle_time = interaction_data.get('idle_time_seconds', 0)
+        tab_switches_per_minute = interaction_data.get('tab_switches_per_minute', 0)
+        mouse_movement_variance = interaction_data.get('mouse_movement_variance', 0)
+        video_scrub_count = interaction_data.get('video_scrub_count', 0)
+        video_replay_count = interaction_data.get('video_replay_count', 0)
+        session_duration_minutes = interaction_data.get('session_duration_minutes', 0)
+        click_frequency = interaction_data.get('click_frequency', 0)
+        scroll_speed_variance = interaction_data.get('scroll_speed_variance', 0)
+        page_dwell_time = interaction_data.get('page_dwell_time', 0)
+        error_encounters = interaction_data.get('error_encounters', 0)
+        features = [
+            idle_time,
+            tab_switches_per_minute,
+            mouse_movement_variance,
+            video_scrub_count,
+            video_replay_count,
+            session_duration_minutes,
+            click_frequency,
+            scroll_speed_variance,
+            page_dwell_time,
+            error_encounters
+        ]
         return np.array(features).reshape(1, -1)
     
     def predict_facial_emotion(self, image_data: np.ndarray) -> Dict[str, float]:

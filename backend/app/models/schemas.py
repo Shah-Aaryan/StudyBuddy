@@ -122,3 +122,4 @@ class GeneralChatRequest(BaseModel):
 class GeneralChatResponse(BaseModel):
     response: str
     status: str
+    urls: List[str] = []
