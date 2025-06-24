@@ -3,8 +3,8 @@ from typing import Optional
 import os
 
 class Settings(BaseSettings):
-    # Database
-    DATABASE_URL: str = "postgresql://postgres:UfPn4h9qbooZnrU2@db.eliytysopayqrnfgadpi.supabase.co:5432/postgres"
+    # Database (loaded from .env)
+    DATABASE_URL: str
 
     
     # Redis
