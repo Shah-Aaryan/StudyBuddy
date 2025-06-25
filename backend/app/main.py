@@ -8,7 +8,8 @@ import logging
 
 from app.config.settings import settings
 from app.models.database import engine, Base, get_db
-from app.api.routes import emotions, feedback, analytics, resources, auth ,notification,reports  # ✅ Import auth
+from app.api.routes import emotions, feedback, analytics, resources, auth ,notification,reports,sessions  # ✅ Import auth
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,7 @@ app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", 
 app.include_router(resources.router, prefix=f"{settings.API_V1_STR}/resources", tags=["resources"])
 app.include_router(notification.router, prefix=f"{settings.API_V1_STR}/notifications", tags=["notifications"])
 app.include_router(reports.router, prefix=f"{settings.API_V1_STR}/reports", tags=["reports"])
+app.include_router(sessions.router, prefix=f"{settings.API_V1_STR}/sessions", tags=["Sessions"])
 
 @app.get("/")
 async def root():

@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
 from app.config.settings import settings
+from sqlalchemy import BigInteger
 
 engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -44,10 +45,7 @@ class EmotionLog(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    session_id = Column(Integer, ForeignKey("learning_sessions.id"))
-    timestamp = Column(DateTime, server_default=func.now())
-    
-    # Emotion scores
+    session_id = Column(BigInteger, ForeignKey("learning_sessions.id"))
     facial_emotions = Column(JSON)  # {happy: 0.2, sad: 0.1, confused: 0.7, ...}
     voice_emotions = Column(JSON)
     interaction_score = Column(Float)
@@ -103,3 +101,5 @@ def get_db():
         yield db
     finally:
         db.close()
+    timestamp = Column(DateTime, server_default=func.now())
+    

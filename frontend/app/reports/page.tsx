@@ -6,19 +6,17 @@ import { apiClient } from '@/lib/api/client';
 import { Report } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
-import { 
-  FileText, 
-  TrendingUp, 
-  Calendar, 
-  Target, 
+import {
+  FileText,
+  TrendingUp,
+  Calendar,
   Award,
   ArrowLeft,
   Download,
   Share2,
-  BarChart3,
   Clock,
   Brain,
-  Zap
+  Zap,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
@@ -26,9 +24,6 @@ import {
   Line,
   BarChart,
   Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -36,6 +31,35 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+
+function convertReportToCSV(reportData: any): string {
+  const summary = reportData.summary || {};
+  const summaryRows = Object.entries(summary).map(([k, v]) => [`Summary - ${k}`, v]);
+  const emotionDist = reportData.emotion_analysis?.distribution || {};
+  const emotionRows = Object.entries(emotionDist).map(([k, v]) => [`Emotion - ${k}`, v]);
+  const interventionRows = reportData.intervention_analysis?.types
+    ? Object.entries(reportData.intervention_analysis.types).map(([k, v]) => [`Intervention - ${k}`, v])
+    : [];
+  const patternRows = Object.entries(reportData.learning_patterns || {}).map(([k, v]) => [`Learning Pattern - ${k}`, v]);
+  const achievementRows = Array.isArray(reportData.achievements)
+    ? reportData.achievements.map((a: any, i: number) => [`Achievement ${i + 1}`, `${a.title}: ${a.description} (${a.points || 0} pts)`])
+    : [];
+  const recommendationRows = Array.isArray(reportData.recommendations)
+    ? reportData.recommendations.map((r: any, i: number) => [`Recommendation ${i + 1}`, r])
+    : [];
+
+  const rows = [
+    ...summaryRows,
+    ...emotionRows,
+    ...interventionRows,
+    ...patternRows,
+    ...achievementRows,
+    ...recommendationRows,
+  ];
+
+  const csvRows = [['Metric', 'Value'], ...rows.map(([k, v]) => [`"${k}"`, `"${v}"`])];
+  return csvRows.map(row => row.join(',')).join('\r\n');
+}
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -51,7 +75,7 @@ export default function ReportsPage() {
         try {
           const [weekly, monthly] = await Promise.all([
             apiClient.getWeeklyReport(user.id),
-            apiClient.getMonthlyReport(user.id)
+            apiClient.getMonthlyReport(user.id),
           ]);
           setWeeklyReport(weekly);
           setMonthlyReport(monthly);
@@ -62,34 +86,66 @@ export default function ReportsPage() {
         }
       }
     };
-
     fetchReports();
   }, [user?.id]);
 
-  // Sample data for charts (replace with real data from reports)
-  const progressData = [
-    { week: 'Week 1', engagement: 75, completion: 60 },
-    { week: 'Week 2', engagement: 82, completion: 70 },
-    { week: 'Week 3', engagement: 68, completion: 65 },
-    { week: 'Week 4', engagement: 90, completion: 85 },
-  ];
-
-  const emotionTrendData = [
-    { day: 'Mon', engaged: 45, confused: 15, frustrated: 10, bored: 8 },
-    { day: 'Tue', engaged: 52, confused: 12, frustrated: 8, bored: 6 },
-    { day: 'Wed', engaged: 38, confused: 20, frustrated: 15, bored: 12 },
-    { day: 'Thu', engaged: 65, confused: 8, frustrated: 5, bored: 4 },
-    { day: 'Fri', engaged: 58, confused: 10, frustrated: 7, bored: 5 },
-  ];
-
-  const interventionData = [
-    { type: 'Video', count: 12, effectiveness: 85 },
-    { type: 'Game', count: 8, effectiveness: 92 },
-    { type: 'Break', count: 15, effectiveness: 78 },
-    { type: 'Chatbot', count: 6, effectiveness: 70 },
-  ];
+  const handleExport = () => {
+    const reportData = activeReport === 'weekly' ? weeklyReport : monthlyReport;
+    if (!reportData) {
+      alert('No report to export');
+      return;
+    }
+    const csv = convertReportToCSV(reportData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${activeReport}_report_user_${user?.id || ''}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const currentReport = activeReport === 'weekly' ? weeklyReport : monthlyReport;
+
+  // Prepare progress data for the LineChart
+  const progressData: Array<{ week: string; engagement: number; completion: number }> =
+    Array.isArray(currentReport?.progress)
+      ? (currentReport?.progress as unknown as Array<{ week: string; engagement: number; completion: number }>)
+      : [
+          { week: 'Week 1', engagement: 60, completion: 50 },
+          { week: 'Week 2', engagement: 70, completion: 60 },
+          { week: 'Week 3', engagement: 80, completion: 75 },
+          { week: 'Week 4', engagement: 85, completion: 80 },
+        ];
+
+  // Prepare emotion trend data for the BarChart
+  const emotionTrendData =
+    currentReport?.emotion_analysis?.trends && Array.isArray(currentReport.emotion_analysis.trends)
+      ? currentReport.emotion_analysis.trends
+      : [
+          { day: 'Mon', engaged: 5, confused: 2, frustrated: 1, bored: 0 },
+          { day: 'Tue', engaged: 6, confused: 1, frustrated: 0, bored: 1 },
+          { day: 'Wed', engaged: 4, confused: 3, frustrated: 2, bored: 0 },
+          { day: 'Thu', engaged: 7, confused: 0, frustrated: 1, bored: 0 },
+          { day: 'Fri', engaged: 5, confused: 2, frustrated: 1, bored: 1 },
+          { day: 'Sat', engaged: 6, confused: 1, frustrated: 0, bored: 0 },
+          { day: 'Sun', engaged: 4, confused: 2, frustrated: 1, bored: 2 },
+        ];
+
+  // Prepare intervention data for the BarChart
+  const interventionData =
+    currentReport?.intervention_analysis?.types
+      ? Object.entries(currentReport.intervention_analysis.types).map(([type, value]: [string, any]) => ({
+          type,
+          count: value.count ?? 0,
+          effectiveness: value.effectiveness ?? 0,
+        }))
+      : [
+          { type: 'Video', count: 5, effectiveness: 85 },
+          { type: 'Quiz', count: 3, effectiveness: 70 },
+          { type: 'Reading', count: 2, effectiveness: 60 },
+        ];
 
   if (loading) {
     return (
@@ -101,45 +157,27 @@ export default function ReportsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push('/dashboard')}
-              >
+              <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Dashboard
               </Button>
               <FileText className="h-8 w-8 text-primary-600" />
               <h1 className="text-xl font-bold text-gray-900">Learning Reports</h1>
             </div>
-            
             <div className="flex items-center space-x-2">
-              <Button
-                variant={activeReport === 'weekly' ? 'primary' : 'outline'}
-                size="sm"
-                onClick={() => setActiveReport('weekly')}
-              >
+              <Button variant={activeReport === 'weekly' ? 'primary' : 'outline'} size="sm" onClick={() => setActiveReport('weekly')}>
                 Weekly
               </Button>
-              <Button
-                variant={activeReport === 'monthly' ? 'primary' : 'outline'}
-                size="sm"
-                onClick={() => setActiveReport('monthly')}
-              >
+              <Button variant={activeReport === 'monthly' ? 'primary' : 'outline'} size="sm" onClick={() => setActiveReport('monthly')}>
                 Monthly
               </Button>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={handleExport}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
-              </Button>
-              <Button variant="outline" size="sm">
-                <Share2 className="h-4 w-4 mr-2" />
-                Share
               </Button>
             </div>
           </div>
