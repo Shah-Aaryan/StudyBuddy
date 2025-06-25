@@ -147,10 +147,11 @@ export function useEmotionDetection({
 
       /* 2-c. start MediaRecorder (Audio) – 4 s timeslice */
       const audioStream = new MediaStream(userStream.getAudioTracks());
-      const mime =
-        MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm';
+      // useEmotionDetection.ts
+const mime = MediaRecorder.isTypeSupported("audio/wav")
+  ? "audio/wav"                            // ← change here
+  : "audio/webm;codecs=opus";
+
       const rec = new MediaRecorder(audioStream, { mimeType: mime });
       rec.ondataavailable = (e) => e.data.size && audioChunksRef.current.push(e.data);
       rec.start(4000); // <-- critical fix
