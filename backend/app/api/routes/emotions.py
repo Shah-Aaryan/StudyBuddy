@@ -1,8 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+import asyncio
 import json
 import logging
+
 
 from app.models.database import get_db, EmotionLog, LearningSession
 from app.models.schemas import EmotionData, EmotionResponse
@@ -12,6 +14,8 @@ from app.models.schemas import InterventionRequest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
 
 class ConnectionManager:
     def __init__(self):
@@ -38,49 +42,52 @@ manager = ConnectionManager()
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
     await manager.connect(websocket, user_id)
     try:
-        while True:
-            # Receive emotion data
-            data = await websocket.receive_text()
-            emotion_data = EmotionData.parse_raw(data)
-            
-            # Process emotion data
-            emotion_response = await emotion_service.process_emotion_data(emotion_data)
-            
-            # Store in database
-            emotion_log = EmotionLog(
-                user_id=user_id,
-                session_id=emotion_data.interaction_data.get('session_id'),
-                facial_emotions=emotion_response.facial_emotions,
-                voice_emotions=emotion_response.voice_emotions,
-                interaction_score=emotion_response.interaction_score,
-                primary_emotion=emotion_response.primary_emotion,
-                confidence_score=emotion_response.confidence,
-                engagement_level=emotion_response.engagement_level
-            )
-            db.add(emotion_log)
-            db.commit()
-            
-            # Send response back
-            await websocket.send_text(emotion_response.json())
-            
-            # Check if intervention is needed
-            if emotion_response.needs_intervention:
-                intervention_request = InterventionRequest(
-                    emotion=emotion_response.primary_emotion,
-                    confidence=emotion_response.confidence,
-                    context=emotion_data.interaction_data
+       while True:
+            try:
+                data = await websocket.receive_json()
+                if data == 'PING':
+                    continue
+
+                emotion_data = EmotionData.parse_obj(data)
+
+
+                # 2. Process emotion
+                emotion_response = await emotion_service.process_emotion_data(emotion_data)
+
+                # 3. Save to DB
+                emotion_log = EmotionLog(
+                    user_id=user_id,
+                    session_id=emotion_data.interaction_data.session_id,
+                    facial_emotions=emotion_response.facial_emotions,
+                    voice_emotions=emotion_response.voice_emotions,
+                    interaction_score=emotion_response.interaction_score,
+                    primary_emotion=emotion_response.primary_emotion,
+                    confidence_score=emotion_response.confidence,
+                    engagement_level=emotion_response.engagement_level
                 )
-                
-                intervention = await feedback_engine.generate_intervention(
-                    intervention_request, user_id
-                )
-                
-                # Send intervention
-                await websocket.send_text(json.dumps({
-                    "type": "intervention",
-                    "data": intervention.dict()
-                }))
-                
+                db.add(emotion_log)
+                db.commit()
+
+                # 4. Send emotion back
+                await websocket.send_text(emotion_response.json())
+
+                # 5. Check + send intervention
+                if emotion_response.needs_intervention:
+                    intervention_request = InterventionRequest(
+                        emotion=emotion_response.primary_emotion,
+                        confidence=emotion_response.confidence,
+                        context=emotion_data.interaction_data
+                    )
+                    intervention = await feedback_engine.generate_intervention(intervention_request, user_id)
+
+                    await websocket.send_text(json.dumps({
+                        "type": "intervention",
+                        "data": intervention.dict()
+                    }))
+            except Exception as inner:
+                logger.warning(f"[WebSocket Loop Error] user={user_id} — {inner}")
+                continue
+
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
         logger.info(f"User {user_id} disconnected")
@@ -101,7 +108,7 @@ async def analyze_emotion(
         # Store in database
         emotion_log = EmotionLog(
             user_id=user_id,
-            session_id=emotion_data.interaction_data.get('session_id'),
+            session_id=emotion_data.interaction_data.session_id,
             facial_emotions=emotion_response.facial_emotions,
             voice_emotions=emotion_response.voice_emotions,
             interaction_score=emotion_response.interaction_score,

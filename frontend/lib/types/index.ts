@@ -18,13 +18,14 @@ export interface EmotionData {
     mouse_movements?: number;
     clicks?: number;
     scrolling?: number;
-    session_id?: string;
+    session_id?: number;
     [key: string]: any;
   };
   timestamp: string;
 }
 
 export interface EmotionResponse {
+  label(label: any): import("react").ReactNode;
   primary_emotion: string;
   confidence: number;
   engagement_level: number;
@@ -90,6 +91,7 @@ export interface Notification {
 }
 
 export interface Report {
+  progress(progress: any): unknown;
   report_type: string;
   period: string;
   user_id: number;

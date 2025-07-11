@@ -1,15 +1,28 @@
+/* --------------------------------------------------------------------------
+   useEmotionDetection.ts     (fully-patched, 2025-06-25)
+   -------------------------------------------------------------------------- */
+
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { EmotionData, EmotionResponse, InterventionResponse } from '@/lib/types';
-import { apiClient } from '@/lib/api/client';
 import toast from 'react-hot-toast';
+import { EmotionData, EmotionResponse, InterventionResponse } from '@/lib/types';
 
 interface UseEmotionDetectionProps {
   userId: number;
-  sessionId?: string;
+  sessionId?: number;
   onEmotionChange?: (emotion: EmotionResponse) => void;
   onIntervention?: (intervention: InterventionResponse) => void;
+}
+
+/** Helper – convert Blob → base-64 body (no data:URL prefix) */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function useEmotionDetection({
@@ -18,227 +31,237 @@ export function useEmotionDetection({
   onEmotionChange,
   onIntervention,
 }: UseEmotionDetectionProps) {
+  /* ──────────── state ──────────── */
   const [isRecording, setIsRecording] = useState(false);
-  const [currentEmotion, setCurrentEmotion] = useState<EmotionResponse | null>(null);
+  const [currentEmotion, setCurrentEmotion] = useState<EmotionResponse | null>(
+    null,
+  );
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+  const [sessionIdInternal, setSessionIdInternal] = useState<number | null>(
+    null,
+  );
+
+  /* ──────────── refs ──────────── */
   const webcamRef = useRef<HTMLVideoElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const interactionRef = useRef({
-    idle_time_seconds: 0,
-    tab_switches_per_minute: 0,
-    mouse_movement_variance: 0,
-    video_scrub_count: 0,
-    video_replay_count: 0,
-    session_duration_minutes: 0,
-    click_frequency: 0,
-    scroll_speed_variance: 0,
-    page_dwell_time: 0,
-    error_encounters: 0,
-    _clicks: 0,
-    _scrolls: 0,
-    _mouseMoves: [] as number[],
-    _lastMouse: null as null | { x: number; y: number },
-    _tabSwitches: 0,
-    _lastActivity: Date.now(),
-    _startTime: Date.now(),
-    _errors: 0,
-  });
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const sessionIdRef = useRef<number | null>(null);
+  const lastChecksumRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    const handleClick = () => {
-      interactionRef.current._clicks++;
-      interactionRef.current._lastActivity = Date.now();
-    };
-    const handleScroll = () => {
-      interactionRef.current._scrolls++;
-      interactionRef.current._lastActivity = Date.now();
-    };
-    const handleMouseMove = (e: MouseEvent) => {
-      if (interactionRef.current._lastMouse) {
-        const dx = e.clientX - interactionRef.current._lastMouse.x;
-        const dy = e.clientY - interactionRef.current._lastMouse.y;
-        interactionRef.current._mouseMoves.push(dx * dx + dy * dy);
-      }
-      interactionRef.current._lastMouse = { x: e.clientX, y: e.clientY };
-      interactionRef.current._lastActivity = Date.now();
-    };
-    const handleVisibility = () => {
-      if (document.hidden) interactionRef.current._tabSwitches++;
-    };
-    const handleError = () => {
-      interactionRef.current._errors++;
-    };
-    window.addEventListener('click', handleClick);
-    window.addEventListener('scroll', handleScroll);
-    window.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('error', handleError);
-    return () => {
-      window.removeEventListener('click', handleClick);
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('error', handleError);
-    };
-  }, []);
+  const mouseDataRef = useRef({
+    movements: 0,
+    clicks: 0,
+    scrolling: 0,
+  });
 
+  /* ════════════════════════════════════════════════════════════════════════
+     1.  WebSocket connect / reconnect
+     ════════════════════════════════════════════════════════════════════════ */
   const connectWebSocket = useCallback(() => {
-    try {
-      const wsUrl = `${process.env.NEXT_PUBLIC_API_URL?.replace('http', 'ws')}/api/v1/emotions/ws/${userId}`;
-      wsRef.current = new WebSocket(wsUrl);
-      wsRef.current.onopen = () => {
-        setIsConnected(true);
-        setError(null);
-        console.log('WebSocket connected');
-      };
-      wsRef.current.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'intervention') {
-            onIntervention?.(data.data);
-            toast.success('New intervention available!');
-          } else {
-            const emotionResponse: EmotionResponse = data;
-            setCurrentEmotion(emotionResponse);
-            onEmotionChange?.(emotionResponse);
-          }
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+    if (!userId || userId < 0) return;
+
+    const wsUrl = `${process.env.NEXT_PUBLIC_API_URL!.replace(
+      'http',
+      'ws',
+    )}/api/v1/emotions/ws/${userId}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('[WebSocket] Connected');
+      setIsConnected(true);
+      setError(null);
+    };
+
+    ws.onmessage = (evt) => {
+      if (evt.data === 'PING') return;
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'intervention') {
+          onIntervention?.(msg.data as InterventionResponse);
+          toast.success('🎯 Intervention triggered!');
+        } else {
+          setCurrentEmotion(msg as EmotionResponse);
+          onEmotionChange?.(msg as EmotionResponse);
         }
-      };
-      wsRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('WebSocket connection error');
-        setIsConnected(false);
-      };
-      wsRef.current.onclose = () => {
-        console.log('WebSocket disconnected');
-        setIsConnected(false);
-      };
-    } catch (error) {
-      console.error('Error connecting to WebSocket:', error);
-      setError('Failed to connect to emotion detection service');
-    }
+      } catch (e) {
+        console.warn('Bad WS payload:', e);
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error('WS error', e);
+      setError('WebSocket error');
+      setIsConnected(false);
+    };
+
+    ws.onclose = () => {
+      console.log('[WebSocket] Closed – reconnect in 3 s');
+      setIsConnected(false);
+      // simple exponential back-off not needed for dev
+      setTimeout(connectWebSocket, 3000);
+    };
   }, [userId, onEmotionChange, onIntervention]);
 
-  const startDetection = useCallback(async () => {
+  /* close WS on unmount */
+  useEffect(() => () => wsRef.current?.close(), []);
+
+  /* ════════════════════════════════════════════════════════════════════════
+     2.  Start detection (creates backend session, opens cam/mic, starts loop)
+     ════════════════════════════════════════════════════════════════════════ */
+  const startDetection = useCallback(async (): Promise<number | null> => {
     if (!webcamRef.current) {
       setError('Webcam not available');
-      return;
+      return null;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      webcamRef.current.srcObject = stream;
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      mediaRecorderRef.current.start(2000);
-      setIsRecording(true);
-      interactionRef.current._startTime = Date.now();
+      /* 2-a. create learning session */
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions/start`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId }),
+        },
+      );
+      if (!res.ok) throw new Error('Session create failed');
+      const { session_id } = await res.json();
+      setSessionIdInternal(session_id);
+      sessionIdRef.current = session_id;
+      console.log('🎯 Session', session_id, 'created');
+
+      /* 2-b. open cam+mic */
+      const userStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      webcamRef.current.srcObject = userStream;
+      await new Promise<void>((resolve) => {
+  const video = webcamRef.current!;
+  if (video.readyState >= 2) return resolve();
+  video.onloadeddata = () => resolve();
+});
+
+      /* 2-c. start MediaRecorder (Audio) – 4 s timeslice */
+      const audioStream = new MediaStream(userStream.getAudioTracks());
+      // useEmotionDetection.ts
+const mime = MediaRecorder.isTypeSupported("audio/wav")
+  ? "audio/wav"                            // ← change here
+  : "audio/webm;codecs=opus";
+
+      const rec = new MediaRecorder(audioStream, { mimeType: mime });
+      rec.ondataavailable = (e) => e.data.size && audioChunksRef.current.push(e.data);
+      rec.start(4000); // <-- critical fix
+      mediaRecorderRef.current = rec;
+
+      /* 2-d. periodic payload loop */
       intervalRef.current = setInterval(async () => {
-        const now = Date.now();
-        if (now - interactionRef.current._lastActivity > 5000) {
-          interactionRef.current.idle_time_seconds += (now - interactionRef.current._lastActivity) / 1000;
-          interactionRef.current._lastActivity = now;
-        }
-        interactionRef.current.session_duration_minutes = (now - interactionRef.current._startTime) / 60000;
-        interactionRef.current.tab_switches_per_minute = interactionRef.current._tabSwitches / (interactionRef.current.session_duration_minutes || 1);
-        interactionRef.current.mouse_movement_variance = interactionRef.current._mouseMoves.length > 1 ? variance(interactionRef.current._mouseMoves) : 0;
-        interactionRef.current.click_frequency = interactionRef.current._clicks / (interactionRef.current.session_duration_minutes || 1);
-        interactionRef.current.scroll_speed_variance = interactionRef.current._scrolls;
-        interactionRef.current.page_dwell_time = (now - interactionRef.current._startTime) / 1000;
-        interactionRef.current.error_encounters = interactionRef.current._errors;
-        let audioBase64 = null;
-        if (audioChunksRef.current.length > 0) {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-          audioBase64 = await blobToBase64(audioBlob);
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        /* ensure we have a real frame */
+        const vid = webcamRef.current!;
+        if (vid.readyState < 2) return; // HAVE_CURRENT_DATA
+
+        /* 🖼 capture webcam frame */
+        const canvas = document.createElement('canvas');
+        canvas.width = vid.videoWidth || 640;
+        canvas.height = vid.videoHeight || 480;
+        canvas.getContext('2d')?.drawImage(vid, 0, 0, canvas.width, canvas.height);
+        const facialData = canvas.toDataURL('image/jpeg', 0.8);
+
+        /* 🔊 pull last 4 s of audio */
+        let audioBase64: string | undefined;
+        if (audioChunksRef.current.length) {
+          const blob = new Blob(audioChunksRef.current, { type: mime });
+          audioBase64 = await blobToBase64(blob);
           audioChunksRef.current = [];
         }
-        let facial_frame = null;
-        if (webcamRef.current) {
-          const canvas = document.createElement('canvas');
-          canvas.width = webcamRef.current.videoWidth;
-          canvas.height = webcamRef.current.videoHeight;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(webcamRef.current, 0, 0);
-            facial_frame = canvas.toDataURL('image/jpeg', 0.8);
-          }
-        }
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          const emotionData: EmotionData = {
-            facial_frame,
-            audio_chunk: audioBase64,
-            interaction_data: { ...interactionRef.current },
-            timestamp: new Date().toISOString(),
-          };
-          wsRef.current.send(JSON.stringify(emotionData));
-        }
-      }, 2000);
-    } catch (error) {
-      console.error('Error starting emotion detection:', error);
-      setError('Failed to access camera/microphone');
+
+        /* 🖱 interaction metrics */
+        const inter = {
+          session_id: sessionIdRef.current ?? sessionIdInternal ?? sessionId,
+          movements: mouseDataRef.current.movements,
+          clicks: mouseDataRef.current.clicks,
+          scrolling: mouseDataRef.current.scrolling,
+        };
+
+        console.log("🎥 Frame size:", facialData.length);
+        console.log("🎧 Audio size:", audioBase64?.length ?? 0);
+
+        /* build payload */
+        const payload: EmotionData = {
+          facial_frame: facialData,
+          audio_chunk: audioBase64,
+          interaction_data: inter,
+          timestamp: new Date().toISOString(),
+        };
+
+        /* duplicate-guard by checksum of key parts */
+        const checksum =
+          facialData.slice(-32) + (audioBase64?.slice(-32) ?? '') + JSON.stringify(inter);
+        if (checksum === lastChecksumRef.current) return;
+        lastChecksumRef.current = checksum;
+
+        ws.send(JSON.stringify(payload));
+        console.log('📤 Sent emotion data – session', inter.session_id);
+
+        /* reset counters for next window */
+        mouseDataRef.current.movements = 0;
+        mouseDataRef.current.clicks = 0;
+        mouseDataRef.current.scrolling = 0;
+      }, 4000);
+
+      setIsRecording(true);
+      return session_id;
+    } catch (err) {
+      console.error(err);
+      setError('Camera/Mic denied or session failed');
+      return null;
     }
+  }, [sessionId, userId]);
+
+  /* ════════════════════════════════════════════════════════════════════════
+     3.  Stop detection
+     ════════════════════════════════════════════════════════════════════════ */
+  const stopDetection = useCallback(() => {
+    intervalRef.current && clearInterval(intervalRef.current);
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+
+    const vid = webcamRef.current;
+    if (vid?.srcObject) {
+      (vid.srcObject as MediaStream).getTracks().forEach((t) => t.stop());
+      vid.srcObject = null;
+    }
+    wsRef.current?.close();
+    setIsRecording(false);
   }, []);
 
-  const stopDetection = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-    }
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (webcamRef.current?.srcObject) {
-      const stream = webcamRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      webcamRef.current.srcObject = null;
-    }
-    setIsRecording(false);
-    interactionRef.current = {
-      idle_time_seconds: 0,
-      tab_switches_per_minute: 0,
-      mouse_movement_variance: 0,
-      video_scrub_count: 0,
-      video_replay_count: 0,
-      session_duration_minutes: 0,
-      click_frequency: 0,
-      scroll_speed_variance: 0,
-      page_dwell_time: 0,
-      error_encounters: 0,
-      _clicks: 0,
-      _scrolls: 0,
-      _mouseMoves: [],
-      _lastMouse: null,
-      _tabSwitches: 0,
-      _lastActivity: Date.now(),
-      _startTime: Date.now(),
-      _errors: 0,
-    };
-  }, [isRecording]);
-
-  function variance(arr: number[]) {
-    if (!arr.length) return 0;
-    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-    return arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length;
-  }
-
+  /* ════════════════════════════════════════════════════════════════════════
+     4.  Mouse / scroll listeners
+     ════════════════════════════════════════════════════════════════════════ */
   useEffect(() => {
+    const move = () => mouseDataRef.current.movements++;
+    const click = () => mouseDataRef.current.clicks++;
+    const scroll = () => mouseDataRef.current.scrolling++;
+    window.addEventListener('mousemove', move);
+    window.addEventListener('click', click);
+    window.addEventListener('scroll', scroll);
     return () => {
-      stopDetection();
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('click', click);
+      window.removeEventListener('scroll', scroll);
     };
-  }, [stopDetection]);
+  }, []);
 
+  /* cleanup on unmount */
+  useEffect(() => () => stopDetection(), [stopDetection]);
+
+  /* ───────────────────────── exports ───────────────────────── */
   return {
     webcamRef,
     isRecording,
@@ -248,17 +271,6 @@ export function useEmotionDetection({
     startDetection,
     stopDetection,
     connectWebSocket,
+    sessionIdInternal,
   };
 }
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(',')[1]);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-} 

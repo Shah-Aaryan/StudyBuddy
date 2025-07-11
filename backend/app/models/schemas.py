@@ -2,6 +2,9 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, List
 from datetime import datetime
 
+class SessionStartRequest(BaseModel):
+    user_id: int
+
 class WeeklyReport(BaseModel):
     report_type: str
     period: str
@@ -38,11 +41,18 @@ class YearlyReport(BaseModel):
     year_over_year: Dict
     insights: List[str]
 
+class InteractionData(BaseModel):
+    session_id: int
+    movements: int
+    clicks: int
+    scrolling: int
+
 class EmotionData(BaseModel):
-    facial_frame: Optional[str]  # base64 encoded image
-    audio_chunk: Optional[str]   # base64 encoded audio
-    interaction_data: Dict       # mouse movements, clicks, scrolling, etc.
-    timestamp: datetime
+    facial_frame: Optional[str] = None
+    audio_chunk: Optional[str] = None
+    interaction_data: Optional[InteractionData] = None
+    timestamp: str
+
 
 class EmotionResponse(BaseModel):
     primary_emotion: str

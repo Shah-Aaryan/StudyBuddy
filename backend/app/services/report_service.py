@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ReportService:
-    def _init_(self):
+    def __init__(self):
         self.emotion_categories = {
             'positive': ['happy', 'engaged', 'calm', 'surprised'],
             'negative': ['sad', 'angry', 'frustrated', 'disgusted'],

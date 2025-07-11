@@ -8,7 +8,7 @@ import logging
 
 from app.config.settings import settings
 from app.models.database import engine, Base, get_db
-from app.api.routes import emotions, feedback, analytics, resources, auth ,notification,reports
+from app.api.routes import emotions, feedback, analytics, resources, auth ,notification,reports,sessions
 from app.api.routes.chat import chat_router  
 
 # Configure logging
